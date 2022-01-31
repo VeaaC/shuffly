@@ -1,0 +1,12 @@
+[package]
+name = "shuffly"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+structopt = "0.3.25"
+rayon = "1.5.1"
+anyhow = "1.0.52"
+crossbeam = "0.8.1"
+num_cpus = "1.13.1"
+thiserror = "1.0.30"
