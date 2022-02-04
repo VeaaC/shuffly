@@ -1,6 +1,6 @@
 name: Shuffly CI
 on:
-  pull_requests
+  pull_requests:
     branches: [main]
   push:
     branches: [main]
