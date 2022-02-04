@@ -1,5 +1,8 @@
 # Shuffly
 
+[<img alt="build" src="https://img.shields.io/github/workflow/status/VeaaC/shuffly/Shuffly%20CI/main?style=for-the-badge">](https://github.com/Veaac/shuffly/actions?query=branch%3Amain)
+[<img alt="docs" src="https://img.shields.io/docsrs/shuffly?style=for-the-badge">](https://crates.io/crates/shuffly)
+[<img alt="package" src="https://img.shields.io/crates/v/shuffly?style=for-the-badge">](https://docs.rs/shuffly)
 
 Increases compressability of data with fixed-sized records.
 
