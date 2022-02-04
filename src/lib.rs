@@ -2,13 +2,15 @@ use std::io::prelude::*;
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crossbeam::channel;
+
+use lz4::EncoderBuilder;
 
 const TAG: [u8; 7] = *b"SHUFFLY";
 const HEADER_SIZE: usize = TAG.len() + 0_u64.to_be_bytes().len();
 const STRIDE_SIZE: usize = 0_u16.to_be_bytes().len();
-const MAX_STRIDE: usize = 64;
 
 /// Lists (non-exhaustivly) all possible error scenarios
 #[non_exhaustive]
@@ -140,38 +142,43 @@ fn read_block(
 
 /// Compute the amount of information present in the distribution of the 8-bit symbols
 fn compute_information(symbol_counts: [usize; 256]) -> usize {
+    let count: usize = symbol_counts.iter().sum();
     symbol_counts
         .into_iter()
         .map(|x| {
             if x == 0 {
                 0
             } else {
-                x * (0_usize.leading_zeros() - (usize::MAX / x).leading_zeros()) as usize
+                (x as f64 * (count as f64 / x as f64).log2()) as usize
             }
         })
         .sum()
 }
 
 /// Finds the most possible stride by trying all of them on a subset of the data
-fn find_best_stride(buf: &[u8]) -> usize {
-    if buf.len() <= MAX_STRIDE {
+fn find_best_stride(buf: &[u8], strides: &[u16]) -> usize {
+    if strides.is_empty() {
         return 0;
     }
-    let (mut stride, mut score) = (0, {
+    let max_stride = strides.iter().copied().max().unwrap_or(0) as usize;
+    if buf.len() <= max_stride {
+        return 0;
+    }
+    let (mut best_stride, mut best_score) = (0, {
         let mut symbol_counts = [0; 256];
-        for chunk in buf[MAX_STRIDE..].chunks(64).step_by(4) {
+        for chunk in buf[max_stride..].chunks(64).step_by(4) {
             for x in chunk {
                 symbol_counts[*x as usize] += 1;
             }
         }
         compute_information(symbol_counts)
     });
-    for i in 1..=MAX_STRIDE {
+    for i in 1..=max_stride {
         let mut symbol_counts = [0; 256];
-        for (a_chunk, b_chunk) in buf[MAX_STRIDE..]
+        for (a_chunk, b_chunk) in buf[max_stride..]
             .chunks(64)
             .step_by(4)
-            .zip(buf[MAX_STRIDE - i..].chunks(64).step_by(4))
+            .zip(buf[max_stride - i..].chunks(64).step_by(4))
         {
             for (a, b) in a_chunk.iter().zip(b_chunk) {
                 symbol_counts[a.wrapping_sub(*b) as usize] += 1;
@@ -179,16 +186,12 @@ fn find_best_stride(buf: &[u8]) -> usize {
         }
 
         let new_score = compute_information(symbol_counts);
-        if new_score < score {
-            stride = i;
-            if new_score * 3 < score * 2 {
-                // the first noticable improvement is very likely the best global one
-                // break;
-            }
-            score = new_score;
+        if new_score < best_score {
+            best_score = new_score;
+            best_stride = i;
         }
     }
-    stride
+    best_stride
 }
 
 fn shuffle(buf: &[u8], stride: usize) -> Vec<u8> {
@@ -239,6 +242,51 @@ fn deshuffle(buf: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(out_buf)
 }
 
+fn compressability(buf: &[u8]) -> Option<usize> {
+    let output = Vec::new();
+    let mut encoder = EncoderBuilder::new()
+        .level(4)
+        .build(output)
+        .expect("Invalid compression level");
+    if encoder.write_all(buf).is_err() {
+        return None;
+    }
+    match encoder.finish() {
+        (output, Ok(_)) => Some(output.len()),
+        _ => None,
+    }
+}
+
+/// Statistics about the encoding process
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct Stats {
+    /// Which strides were used how often
+    pub strides: Vec<(usize, u64)>,
+}
+
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct Options {
+    pub block_size: usize,
+    pub strides: Vec<u16>,
+}
+
+impl Options {
+    pub fn new() -> Self {
+        Self {
+            block_size: 1024 * 1024,
+            strides: (0..=64).collect(),
+        }
+    }
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Encodes data by searching for fixed-sized correctlation in the data and
 /// shuffling data around accordingly.
 /// At least 3 threads will be used, one for input, one for output, and one for encoding
@@ -246,23 +294,42 @@ pub fn encode(
     threads: usize,
     input: Input,
     mut output: Output,
-    block_size: usize,
-) -> Result<(), Error> {
+    options: &Options,
+) -> Result<Stats, Error> {
     // write header
     output.write_all(b"SHUFFLY").map_err(Error::Output)?;
     output
-        .write_all(&(block_size as u64).to_be_bytes())
+        .write_all(&(options.block_size as u64).to_be_bytes())
         .map_err(Error::Output)?;
+    let mut strides = HashMap::new();
     parallel_process(
         threads,
-        std::iter::from_fn(read_block(input, block_size)),
+        std::iter::from_fn(read_block(input, options.block_size)),
         |buf: Result<Vec<u8>, Error>| {
             let buf = buf?;
-            let stride = find_best_stride(&buf);
-            Ok(shuffle(&buf, stride))
+            let stride = find_best_stride(&buf, &options.strides);
+            // lets do a quick sanity check if we are not making things worse
+            let prefix = &buf[..buf.len().min(1024 * 4)];
+            let shuffled_prefix = shuffle(prefix, stride);
+            if let (Some(original), Some(shuffled)) =
+                (compressability(prefix), compressability(&shuffled_prefix))
+            {
+                if original < shuffled {
+                    // the shuffled version is less compressible than the original one
+                    return Ok((0, shuffle(&buf, 0)));
+                }
+            }
+            Ok((stride, shuffle(&buf, stride)))
         },
-        |buf| output.write_all(&buf?).map_err(Error::Output),
-    )
+        |data| {
+            let (stride, buf) = data?;
+            *strides.entry(stride).or_insert(0) += 1;
+            output.write_all(&buf).map_err(Error::Output)
+        },
+    )?;
+    let mut strides: Vec<_> = strides.into_iter().collect();
+    strides.sort_unstable();
+    Ok(Stats { strides })
 }
 
 /// Decoded data that has previously been encoded.
@@ -330,7 +397,10 @@ mod tests {
                 2,
                 Box::new(std::io::Cursor::new(input.clone())),
                 Box::new(shuffled.clone()),
-                19,
+                &Options {
+                    block_size: 19,
+                    ..Options::new()
+                },
             )
             .expect("Failed to encode");
             let shuffled = Arc::try_unwrap(shuffled.data)

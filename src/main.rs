@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Instant;
 use structopt::StructOpt;
 
 fn parse_size(x: &str) -> anyhow::Result<usize> {
@@ -17,8 +18,22 @@ fn parse_size(x: &str) -> anyhow::Result<usize> {
     anyhow::bail!("Cannot parse size: '{}'", x)
 }
 
+fn parse_strides(x: &str) -> anyhow::Result<Vec<u16>> {
+    let mut result = Vec::new();
+    if let Some((first, second)) = x.split_once("..=") {
+        let range: std::ops::RangeInclusive<u16> = first.parse()?..=second.parse()?;
+        result.extend(range);
+    } else if let Some((first, second)) = x.split_once("..") {
+        let range: std::ops::Range<u16> = first.parse()?..second.parse()?;
+        result.extend(range);
+    } else {
+        result.push(x.parse()?)
+    }
+    Ok(result)
+}
+
 #[derive(StructOpt, Debug)]
-#[structopt(name = "deshufi")]
+#[structopt(name = "shuffly")]
 struct Args {
     /// input file name
     #[structopt(long, short = "i")]
@@ -43,6 +58,14 @@ struct Args {
     /// number of threads to use, defaults to number of logical cores
     #[structopt(long, short = "t")]
     threads: Option<usize>,
+
+    /// Print verbose information, statistics, etc
+    #[structopt(long, short = "v")]
+    verbose: bool,
+
+    // specifies which strides should be used to try to detect fixed-sized patterns
+    #[structopt(long, default_value = "0..65", parse(try_from_str=parse_strides), use_delimiter = true)]
+    strides: Vec<Vec<u16>>,
 }
 
 fn main() {
@@ -77,14 +100,31 @@ fn main() {
         Box::new(std::io::stdout())
     };
 
+    let now = Instant::now();
+
     let result = if args.encode {
-        shuffly::encode(threads, input, output, args.block_size)
+        let mut options = shuffly::Options::new();
+        options.block_size = args.block_size;
+        options.strides = args.strides.iter().flatten().copied().collect();
+        shuffly::encode(threads, input, output, &options).map(|stats| {
+            if !args.verbose {
+                return;
+            }
+            eprintln!("Stride statistics:");
+            for (stride, count) in stats.strides {
+                eprintln!("    Stride {}, blocks {}", stride, count);
+            }
+        })
     } else if args.decode {
         shuffly::decode(threads, input, output)
     } else {
         eprintln!("Specified neither encode nor decode");
         std::process::exit(1);
     };
+
+    if args.verbose {
+        eprintln!("Took: {}s", now.elapsed().as_secs())
+    }
 
     if let Err(e) = result {
         eprintln!("Failed: {}", e);
