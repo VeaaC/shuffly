@@ -23,6 +23,14 @@ tar -cf - my_folder | shuffly -e | pzstd -o my_folder.tar.shuffly.pzstd
 cat my_folder.tar.shuffly.pzstd | pzstd -d | shuffly -d | tar -xvf -
 ```
 
+## Installation
+
+The CLI app can be installed with [Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html):
+
+```sh
+cargo install shuffly
+```
+
 ## Examples
 
 Compressing OpenStreetMap data stored in [osmflat](https://github.com/boxdot/osmflat-rs) format is a good example for which `shuffly` can dramatically improve compression ratios.

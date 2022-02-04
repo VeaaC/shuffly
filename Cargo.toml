@@ -2,6 +2,11 @@
 name = "shuffly"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+keywords = ["compression","flatdata"]
+description = "Increases compressability of data with fixed-sized records."
+homepage = "https://github.com/VeaaC/shuffly"
+repository = "https://github.com/VeaaC/shuffly"
 
 [dependencies]
 structopt = "0.3.25"

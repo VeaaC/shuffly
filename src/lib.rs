@@ -1,3 +1,32 @@
+//! Increases compressability of data with fixed-sized records.
+//!
+//! `Shuffly` detects fixed-sized data patterns by trying out different
+//! pattern sized between (by default 1 to 64 bytes). For each pattern it reorderd bytes
+//! such that byte X of each record is group together, and stores deltas of
+//! these bytes instead of the original data.
+//!
+//! The resulting data stream is much more compressible for pattern based
+//! compression algorithms like deflate /gz, zip, etc), zstd, or lzma.
+//!
+//! Shuffly is available both as a command line app (e.g. `cargo install shuffly`),
+//! and a library.
+//!
+//! Library usage
+//! ```no_run
+//! # let input = "foo";
+//! # let output = "bar";
+//! # let encode = true;
+//! # use std::fs::File;
+//! let input: shuffly::Input = Box::new(File::open(input).unwrap());
+//! let output: shuffly::Output = Box::new(File::create(output).unwrap());
+//! let options = shuffly::Options::new();
+//! if encode {
+//!     shuffly::encode(0, input, output, &shuffly::Options::new()).unwrap();
+//! } else {
+//!     shuffly::decode(0, input, output).unwrap();
+//! }
+//! ```
+
 use std::io::prelude::*;
 
 use std::cmp::Reverse;
@@ -265,6 +294,7 @@ pub struct Stats {
     pub strides: Vec<(usize, u64)>,
 }
 
+/// Options passed to the encoder
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Options {
