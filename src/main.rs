@@ -44,7 +44,7 @@ struct Args {
     output: Option<PathBuf>,
 
     /// block size used for data shuffling and compression
-    #[structopt(long, default_value = "1MB", parse(try_from_str=parse_size))]
+    #[structopt(long, default_value = "4MB", parse(try_from_str=parse_size))]
     block_size: usize,
 
     /// encodes input into SHUFFLY format
