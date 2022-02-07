@@ -173,58 +173,18 @@ fn read_block(
     }
 }
 
-/// Compute the amount of information present in the distribution of the 8-bit symbols
-fn compute_information(symbol_counts: [usize; 256]) -> usize {
-    let count: usize = symbol_counts.iter().sum();
-    symbol_counts
-        .into_iter()
-        .map(|x| {
-            if x == 0 {
-                0
-            } else {
-                (x as f64 * (count as f64 / x as f64).log2()) as usize
-            }
-        })
-        .sum()
-}
-
 /// Finds the most possible stride by trying all of them on a subset of the data
 fn find_best_stride(buf: &[u8], strides: &[u16]) -> usize {
-    if strides.is_empty() {
-        return 0;
-    }
-    let max_stride = strides.iter().copied().max().unwrap_or(0) as usize;
-    if buf.len() <= max_stride {
-        return 0;
-    }
-    let (mut best_stride, mut best_score) = (0, {
-        let mut symbol_counts = [0; 256];
-        for chunk in buf[max_stride..].chunks(64).step_by(4) {
-            for x in chunk {
-                symbol_counts[*x as usize] += 1;
-            }
-        }
-        compute_information(symbol_counts)
-    });
-    for i in 1..=max_stride {
-        let mut symbol_counts = [0; 256];
-        for (a_chunk, b_chunk) in buf[max_stride..]
-            .chunks(64)
-            .step_by(4)
-            .zip(buf[max_stride - i..].chunks(64).step_by(4))
-        {
-            for (a, b) in a_chunk.iter().zip(b_chunk) {
-                symbol_counts[a.wrapping_sub(*b) as usize] += 1;
-            }
-        }
-
-        let new_score = compute_information(symbol_counts);
-        if new_score < best_score {
-            best_score = new_score;
-            best_stride = i;
-        }
-    }
-    best_stride
+    let prefix = &buf[..buf.len().min(1024 * 4)];
+    strides
+        .iter()
+        .filter_map(|stride| {
+            let shuffled_prefix = shuffle(prefix, *stride as usize);
+            compressability(&shuffled_prefix).map(|size| (size, *stride))
+        })
+        .min()
+        .unwrap_or((0, 0))
+        .1 as usize
 }
 
 fn shuffle(buf: &[u8], stride: usize) -> Vec<u8> {
@@ -309,7 +269,7 @@ pub struct Options {
 impl Options {
     pub fn new() -> Self {
         Self {
-            block_size: 1024 * 1024,
+            block_size: 4 * 1024 * 1024,
             strides: (0..=64).collect(),
         }
     }
@@ -342,17 +302,6 @@ pub fn encode(
         |buf: Result<Vec<u8>, Error>| {
             let buf = buf?;
             let stride = find_best_stride(&buf, &options.strides);
-            // lets do a quick sanity check if we are not making things worse
-            let prefix = &buf[..buf.len().min(1024 * 4)];
-            let shuffled_prefix = shuffle(prefix, stride);
-            if let (Some(original), Some(shuffled)) =
-                (compressability(prefix), compressability(&shuffled_prefix))
-            {
-                if original < shuffled {
-                    // the shuffled version is less compressible than the original one
-                    return Ok((0, shuffle(&buf, 0)));
-                }
-            }
             Ok((stride, shuffle(&buf, stride)))
         },
         |data| {
