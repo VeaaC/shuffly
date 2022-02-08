@@ -5,12 +5,12 @@
 //! Increases compressability of data with fixed-sized records.
 //!
 //! `Shuffly` detects fixed-sized data patterns by trying out different
-//! pattern sized between (by default 1 to 64 bytes). For each pattern it reorderd bytes
-//! such that byte X of each record is group together, and stores deltas of
+//! pattern sized between (by default 1 to 64 bytes). For each pattern it reorders bytes
+//! such that byte X of each record is grouped together, and stores deltas of
 //! these bytes instead of the original data.
 //!
 //! The resulting data stream is much more compressible for pattern based
-//! compression algorithms like deflate /gz, zip, etc), zstd, or lzma.
+//! compression algorithms like deflate (gz, zip, etc), zstd, or lzma.
 //!
 //! Shuffly is available both as a command line app (e.g. `cargo install shuffly`),
 //! and a library.
@@ -281,7 +281,7 @@ impl Default for Options {
     }
 }
 
-/// Encodes data by searching for fixed-sized correctlation in the data and
+/// Encodes data by searching for fixed-sized correlations in the data and
 /// shuffling data around accordingly.
 /// At least 3 threads will be used, one for input, one for output, and one for encoding
 pub fn encode(
